@@ -34,12 +34,18 @@ export default function CreatePortfolio() {
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
 
+    console.log('검색 시작:', searchQuery)
     setSearching(true)
     try {
       const response = await assetAPI.search(searchQuery)
+      console.log('검색 결과:', response.data)
       setSearchResults(response.data)
-    } catch (err) {
-      alert('종목 검색에 실패했습니다.')
+      if (response.data.length === 0) {
+        alert('검색 결과가 없습니다. 다른 종목명이나 티커를 시도해보세요.')
+      }
+    } catch (err: any) {
+      console.error('검색 오류:', err)
+      alert(`종목 검색에 실패했습니다: ${err.response?.data?.detail || err.message}`)
     } finally {
       setSearching(false)
     }
@@ -94,17 +100,21 @@ export default function CreatePortfolio() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    console.log('포트폴리오 생성 시도')
     setError('')
 
     // 검증
     if (selectedAssets.length === 0) {
       setError('최소 1개 이상의 종목을 추가해주세요.')
+      alert('최소 1개 이상의 종목을 추가해주세요.')
       return
     }
 
     const totalWeight = getTotalWeight()
     if (Math.abs(totalWeight - 100) > 0.01) {
-      setError(`목표 비중의 합이 100%가 되어야 합니다. (현재: ${totalWeight.toFixed(2)}%)`)
+      const errorMsg = `목표 비중의 합이 100%가 되어야 합니다. (현재: ${totalWeight.toFixed(2)}%)`
+      setError(errorMsg)
+      alert(errorMsg)
       return
     }
 
@@ -122,11 +132,16 @@ export default function CreatePortfolio() {
         }))
       }
 
+      console.log('포트폴리오 데이터:', portfolioData)
       const response = await portfolioAPI.create(portfolioData)
+      console.log('생성 완료:', response.data)
       alert('포트폴리오가 생성되었습니다!')
       navigate(`/portfolio/${response.data.id}`)
     } catch (err: any) {
-      setError(err.response?.data?.detail || '포트폴리오 생성에 실패했습니다.')
+      console.error('생성 오류:', err)
+      const errorMsg = err.response?.data?.detail || '포트폴리오 생성에 실패했습니다.'
+      setError(errorMsg)
+      alert(errorMsg)
     } finally {
       setLoading(false)
     }
