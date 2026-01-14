@@ -1,0 +1,67 @@
+# GitHub Actions 워크플로우 (선택사항)
+# Railway는 기본적으로 GitHub push 시 자동 배포하므로
+# 이 파일은 선택적으로 사용할 수 있습니다.
+
+name: Deploy to Railway
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        cd backend
+        pip install -r requirements.txt
+    
+    - name: Run tests (if you have them)
+      run: |
+        cd backend
+        # pytest tests/
+        echo "No tests configured yet"
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: Install dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Build
+      run: |
+        cd frontend
+        npm run build
+    
+    - name: Run tests (if you have them)
+      run: |
+        cd frontend
+        # npm test
+        echo "No tests configured yet"
+
+  # Railway는 자동으로 배포하므로 별도의 deploy job은 불필요
+  # 필요시 Railway CLI를 사용한 배포 스크립트 추가 가능
+

@@ -1,0 +1,112 @@
+.create-portfolio {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px 0;
+}
+
+.create-portfolio h1 {
+  font-size: 32px;
+  font-weight: 700;
+  margin-bottom: 30px;
+  color: #333;
+}
+
+.create-portfolio h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: #333;
+}
+
+.create-portfolio h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 15px;
+  color: #333;
+}
+
+.create-portfolio .card {
+  margin-bottom: 30px;
+}
+
+.hint {
+  color: #666;
+  font-size: 14px;
+  margin-bottom: 15px;
+}
+
+.search-box {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.search-box .input {
+  flex: 1;
+}
+
+.search-results {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 15px;
+  background-color: #f8f9fa;
+}
+
+.search-result-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  border-bottom: 1px solid #ddd;
+}
+
+.search-result-item:last-child {
+  border-bottom: none;
+}
+
+.exchange {
+  color: #666;
+  font-size: 12px;
+}
+
+.price {
+  color: #007bff;
+  font-weight: 600;
+}
+
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.assets-table {
+  width: 100%;
+}
+
+.assets-table .input-sm {
+  padding: 6px;
+  font-size: 14px;
+}
+
+.assets-table td small {
+  color: #666;
+  font-size: 12px;
+}
+
+.assets-table tfoot td {
+  font-weight: 600;
+  border-top: 2px solid #333;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 30px;
+}
+
+textarea.input {
+  resize: vertical;
+  font-family: inherit;
+}
+
