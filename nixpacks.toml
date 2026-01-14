@@ -1,0 +1,8 @@
+# Nixpacks configuration for monorepo
+# Please set Root Directory in Railway dashboard:
+# - For backend: set to "backend"
+# - For frontend: set to "frontend"
+
+[phases.setup]
+nixPkgs = ["python39", "nodejs-18_x"]
+

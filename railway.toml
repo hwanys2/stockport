@@ -1,0 +1,7 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "echo 'Please set Root Directory to backend or frontend in Railway dashboard'"
+
+[deploy]
+startCommand = "echo 'This is a monorepo. Please configure Root Directory in Railway Settings.'"
+

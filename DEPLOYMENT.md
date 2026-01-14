@@ -33,14 +33,21 @@
 ### Step 3: Backend 서비스 설정
 
 1. 프로젝트에서 GitHub 저장소 서비스 선택
-2. Settings → 다음 설정 변경:
+2. **Settings** → 다음 설정 변경:
+
+#### ⚠️ 중요: Root Directory 설정
+```
+Root Directory: backend
+```
+**(슬래시 없이 `backend`만 입력)**
 
 #### Build & Deploy Settings
 ```
-Root Directory: /backend
 Build Command: (비워둠, nixpacks가 자동 처리)
 Start Command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
+
+💡 **Root Directory를 설정하지 않으면 빌드가 실패합니다!**
 
 #### Environment Variables
 ```bash
@@ -88,12 +95,19 @@ https://your-backend.railway.app/docs
 
 ### Step 2: Frontend 서비스 설정
 
+#### ⚠️ 중요: Root Directory 설정
+```
+Root Directory: frontend
+```
+**(슬래시 없이 `frontend`만 입력)**
+
 #### Settings → Build & Deploy
 ```
-Root Directory: /frontend
 Build Command: npm install && npm run build
 Start Command: npm run preview -- --host 0.0.0.0 --port $PORT
 ```
+
+💡 **Root Directory를 설정하지 않으면 빌드가 실패합니다!**
 
 #### Environment Variables
 ```bash
@@ -138,7 +152,19 @@ Settings → Deploy → Branch: `main` (또는 원하는 브랜치)
 
 ### Backend 배포 실패
 
-#### 문제 1: 포트 바인딩 실패
+#### 문제 1: Monorepo 빌드 실패
+```
+❌ railpack process exited with an error
+❌ No package.json or requirements.txt found
+```
+
+**해결:**
+- Railway Settings에서 **Root Directory** 설정 확인
+- Backend: `backend` (슬래시 없이)
+- Frontend: `frontend` (슬래시 없이)
+- 설정 후 **Redeploy** 버튼 클릭
+
+#### 문제 2: 포트 바인딩 실패
 ```
 ❌ Error: Address already in use
 ```
