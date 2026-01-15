@@ -1,99 +1,139 @@
-import yfinance as yf
+import FinanceDataReader as fdr
 from typing import List, Dict, Optional
-import time
-from urllib.error import HTTPError
-import requests
+from datetime import datetime, timedelta
 from ..schemas.portfolio import AssetSearch
 
-# 간단한 인메모리 캐시 (서버 재시작 시 초기화)
-_asset_cache: Dict[str, Optional[AssetSearch]] = {}
-_cache_timestamp: Dict[str, float] = {}
-CACHE_TTL = 300  # 5분
 
-# 일반적인 종목 매핑 (이름 -> 티커)
-COMMON_STOCKS = {
-    # 미국 주식
-    'apple': 'AAPL', 'aapl': 'AAPL', '애플': 'AAPL',
-    'microsoft': 'MSFT', 'msft': 'MSFT', '마이크로소프트': 'MSFT',
-    'tesla': 'TSLA', 'tsla': 'TSLA', '테슬라': 'TSLA',
-    'amazon': 'AMZN', 'amzn': 'AMZN', '아마존': 'AMZN',
-    'google': 'GOOGL', 'googl': 'GOOGL', '구글': 'GOOGL',
-    'meta': 'META', 'meta': 'META', '페이스북': 'META',
-    'nvidia': 'NVDA', 'nvda': 'NVDA', '엔비디아': 'NVDA',
-    'netflix': 'NFLX', 'nflx': 'NFLX', '넷플릭스': 'NFLX',
-    'disney': 'DIS', 'dis': 'DIS', '디즈니': 'DIS',
-    'jpmorgan': 'JPM', 'jpm': 'JPM', '모건': 'JPM',
-    'visa': 'V', 'v': 'V',
-    'mastercard': 'MA', 'ma': 'MA',
-    'coca cola': 'KO', 'ko': 'KO', '코카콜라': 'KO',
+# 한국 주식 종목 리스트 캐시
+_krx_stocks_cache = None
+_krx_cache_time = None
+KRX_CACHE_TTL = 3600  # 1시간
+
+# 미국 주식 주요 종목
+US_MAJOR_STOCKS = {
+    'aapl': ('AAPL', 'Apple Inc.'),
+    'apple': ('AAPL', 'Apple Inc.'),
+    '애플': ('AAPL', 'Apple Inc.'),
     
-    # 한국 주식
-    '삼성': '005930.KS', '삼성전자': '005930.KS', '005930': '005930.KS',
-    'sk하이닉스': '000660.KS', '하이닉스': '000660.KS', '000660': '000660.KS',
-    'naver': '035420.KS', '네이버': '035420.KS', '035420': '035420.KS',
-    'kakao': '035720.KS', '카카오': '035720.KS', '035720': '035720.KS',
-    'lg': '003550.KS', 'lg전자': '066570.KS',
-    '현대': '005380.KS', '현대차': '005380.KS',
-    '기아': '000270.KS',
-    '셀트리온': '068270.KS',
-    '포스코': '005490.KS',
+    'msft': ('MSFT', 'Microsoft Corporation'),
+    'microsoft': ('MSFT', 'Microsoft Corporation'),
+    '마이크로소프트': ('MSFT', 'Microsoft Corporation'),
+    
+    'googl': ('GOOGL', 'Alphabet Inc.'),
+    'google': ('GOOGL', 'Alphabet Inc.'),
+    '구글': ('GOOGL', 'Alphabet Inc.'),
+    
+    'amzn': ('AMZN', 'Amazon.com Inc.'),
+    'amazon': ('AMZN', 'Amazon.com Inc.'),
+    '아마존': ('AMZN', 'Amazon.com Inc.'),
+    
+    'tsla': ('TSLA', 'Tesla Inc.'),
+    'tesla': ('TSLA', 'Tesla Inc.'),
+    '테슬라': ('TSLA', 'Tesla Inc.'),
+    
+    'meta': ('META', 'Meta Platforms Inc.'),
+    'facebook': ('META', 'Meta Platforms Inc.'),
+    '메타': ('META', 'Meta Platforms Inc.'),
+    '페이스북': ('META', 'Meta Platforms Inc.'),
+    
+    'nvda': ('NVDA', 'NVIDIA Corporation'),
+    'nvidia': ('NVDA', 'NVIDIA Corporation'),
+    '엔비디아': ('NVDA', 'NVIDIA Corporation'),
+    
+    'nflx': ('NFLX', 'Netflix Inc.'),
+    'netflix': ('NFLX', 'Netflix Inc.'),
+    '넷플릭스': ('NFLX', 'Netflix Inc.'),
+    
+    'dis': ('DIS', 'The Walt Disney Company'),
+    'disney': ('DIS', 'The Walt Disney Company'),
+    '디즈니': ('DIS', 'The Walt Disney Company'),
+    
+    'jpm': ('JPM', 'JPMorgan Chase & Co.'),
+    'jpmorgan': ('JPM', 'JPMorgan Chase & Co.'),
+    
+    'v': ('V', 'Visa Inc.'),
+    'visa': ('V', 'Visa Inc.'),
+    
+    'ma': ('MA', 'Mastercard Incorporated'),
+    'mastercard': ('MA', 'Mastercard Incorporated'),
+    
+    'ko': ('KO', 'The Coca-Cola Company'),
+    'coca cola': ('KO', 'The Coca-Cola Company'),
+    '코카콜라': ('KO', 'The Coca-Cola Company'),
+    
+    'pypl': ('PYPL', 'PayPal Holdings Inc.'),
+    'paypal': ('PYPL', 'PayPal Holdings Inc.'),
+    
+    'intc': ('INTC', 'Intel Corporation'),
+    'intel': ('INTC', 'Intel Corporation'),
+    '인텔': ('INTC', 'Intel Corporation'),
+    
+    'amd': ('AMD', 'Advanced Micro Devices Inc.'),
+    
+    'ba': ('BA', 'The Boeing Company'),
+    'boeing': ('BA', 'The Boeing Company'),
+    '보잉': ('BA', 'The Boeing Company'),
 }
+
+
+def _get_krx_stocks():
+    """한국 거래소 전체 종목 리스트 가져오기 (캐시 사용)"""
+    global _krx_stocks_cache, _krx_cache_time
+    
+    # 캐시 확인
+    if _krx_stocks_cache is not None and _krx_cache_time is not None:
+        if (datetime.now() - _krx_cache_time).seconds < KRX_CACHE_TTL:
+            return _krx_stocks_cache
+    
+    try:
+        # KOSPI + KOSDAQ 전체 종목 가져오기
+        krx_stocks = fdr.StockListing('KRX')
+        _krx_stocks_cache = krx_stocks
+        _krx_cache_time = datetime.now()
+        return krx_stocks
+    except Exception as e:
+        print(f"KRX stock listing error: {e}")
+        return None
 
 
 def search_assets(query: str, limit: int = 10) -> List[AssetSearch]:
     """
-    종목 검색 (yfinance의 Ticker를 이용)
-    yfinance는 검색 API가 없으므로 일반적인 티커들을 시도
+    종목 검색 (FinanceDataReader 사용)
     """
     try:
         query_lower = query.lower().strip()
         query_upper = query.upper().strip()
         results = []
         
-        # 1. 일반적인 종목 매핑에서 찾기
-        found_in_mapping = False
-        if query_lower in COMMON_STOCKS:
-            symbol = COMMON_STOCKS[query_lower]
-            found_in_mapping = True
-            print(f"Found {query} in mapping: {symbol}")
-            
-            # API 호출 전 딜레이 (rate limiting 방지)
-            time.sleep(1.0)
-            
-            asset = _try_get_asset_info(symbol)
+        # 1. 미국 주식 매핑에서 검색
+        if query_lower in US_MAJOR_STOCKS:
+            symbol, name = US_MAJOR_STOCKS[query_lower]
+            asset = _get_us_stock_info(symbol, name)
             if asset:
                 results.append(asset)
-                # 매핑에서 찾은 경우 바로 반환 (추가 시도 없음)
-                return results[:limit]
         
-        # 2. 매핑에 없는 경우에만 직접 티커 시도
-        # 한글이 포함된 경우 ticker로 시도하지 않음
-        if not found_in_mapping and query.isascii() and query.isalnum():
-            # 먼저 기본 심볼만 시도 (미국 주식일 가능성이 높음)
-            base_symbol = query_upper
-            
-            time.sleep(1.0)
-            asset = _try_get_asset_info(base_symbol)
+        # 2. 미국 주식 티커 직접 입력 (영문만, 대문자)
+        if len(results) < limit and query.isalpha() and query.isupper():
+            asset = _get_us_stock_info(query_upper)
             if asset:
-                results.append(asset)
-                if len(results) >= limit:
-                    return results[:limit]
-        
-        # 3. 숫자로만 이루어진 경우 (한국 주식 코드일 가능성)
-        # 예: 005930, 035420
-        if not found_in_mapping and query.isdigit():
-            korean_symbols = [
-                f"{query_upper}.KS",  # 한국 KOSPI
-                f"{query_upper}.KQ",  # 한국 KOSDAQ
-            ]
-            
-            for symbol in korean_symbols:
-                time.sleep(1.0)
-                asset = _try_get_asset_info(symbol)
-                if asset:
+                # 중복 제거
+                if not any(r.symbol == asset.symbol for r in results):
                     results.append(asset)
-                    if len(results) >= limit:
-                        break
+        
+        # 3. 한국 주식 검색
+        if len(results) < limit:
+            krx_stocks = _get_krx_stocks()
+            if krx_stocks is not None:
+                # 종목명 또는 코드로 검색
+                matched = krx_stocks[
+                    krx_stocks['Name'].str.contains(query, case=False, na=False) |
+                    krx_stocks['Code'].str.contains(query, case=False, na=False)
+                ]
+                
+                for _, row in matched.head(limit - len(results)).iterrows():
+                    asset = _get_kr_stock_info(row['Code'], row['Name'])
+                    if asset:
+                        results.append(asset)
         
         return results[:limit]
     except Exception as e:
@@ -103,166 +143,89 @@ def search_assets(query: str, limit: int = 10) -> List[AssetSearch]:
         return []
 
 
-def _try_get_asset_info(symbol: str, max_retries: int = 3) -> Optional[AssetSearch]:
-    """티커 심볼로 종목 정보 가져오기 (재시도 로직 및 캐싱 포함)"""
-    # 캐시 확인
-    if symbol in _asset_cache:
-        cache_time = _cache_timestamp.get(symbol, 0)
-        if time.time() - cache_time < CACHE_TTL:
-            print(f"Cache hit for {symbol}")
-            return _asset_cache[symbol]
-    
-    for attempt in range(max_retries):
-        try:
-            ticker = yf.Ticker(symbol)
-            
-            # fast_info 사용 (더 빠름)
-            try:
-                fast_info = ticker.fast_info
-                if fast_info and hasattr(fast_info, 'lastPrice'):
-                    price = fast_info.lastPrice
-                    if price and price > 0:
-                        # info에서 이름 가져오기
-                        info = ticker.info
-                        name = info.get('longName') or info.get('shortName') or symbol
-                        result = AssetSearch(
-                            symbol=symbol,
-                            name=name,
-                            exchange=info.get('exchange', ''),
-                            current_price=float(price)
-                        )
-                        # 캐시에 저장
-                        _asset_cache[symbol] = result
-                        _cache_timestamp[symbol] = time.time()
-                        return result
-            except (HTTPError, requests.exceptions.HTTPError) as e:
-                status_code = getattr(e, 'code', None) or getattr(e.response, 'status_code', None)
-                if status_code == 429:  # Too Many Requests
-                    wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
-                    if attempt < max_retries - 1:
-                        print(f"Rate limited for {symbol}, waiting {wait_time}s before retry...")
-                        time.sleep(wait_time)
-                        continue
-                    return None
-                # 다른 HTTP 에러는 무시하고 다음 시도
-                pass
-            except Exception:
-                pass
-            
-            # fast_info 실패 시 info 사용
-            try:
-                info = ticker.info
-                if not info:
-                    return None
-                
-                # 유효한 티커인지 확인 (심볼이 있고 가격 정보가 있는지)
-                if 'symbol' not in info:
-                    return None
-                
-                price = (
-                    info.get('currentPrice') or 
-                    info.get('regularMarketPrice') or 
-                    info.get('previousClose')
-                )
-                
-                if not price or price <= 0:
-                    return None
-                
-                name = info.get('longName') or info.get('shortName') or symbol
-                
-                result = AssetSearch(
-                    symbol=info.get('symbol', symbol),
-                    name=name,
-                    exchange=info.get('exchange', ''),
-                    current_price=float(price)
-                )
-                # 캐시에 저장
-                _asset_cache[symbol] = result
-                _cache_timestamp[symbol] = time.time()
-                return result
-            except (HTTPError, requests.exceptions.HTTPError) as e:
-                status_code = getattr(e, 'code', None) or getattr(e.response, 'status_code', None)
-                if status_code == 429:  # Too Many Requests
-                    wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
-                    if attempt < max_retries - 1:
-                        print(f"Rate limited for {symbol}, waiting {wait_time}s before retry...")
-                        time.sleep(wait_time)
-                        continue
-                    return None
-                return None
-                
-        except (HTTPError, requests.exceptions.HTTPError) as e:
-            status_code = getattr(e, 'code', None) or getattr(e.response, 'status_code', None)
-            if status_code == 429:  # Too Many Requests
-                wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
-                if attempt < max_retries - 1:
-                    print(f"Rate limited for {symbol}, waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                    continue
-                return None
-            # 특정 티커 실패는 무시 (다른 티커 시도)
+def _get_us_stock_info(symbol: str, name: str = None) -> Optional[AssetSearch]:
+    """미국 주식 정보 가져오기 (FinanceDataReader)"""
+    try:
+        # 최근 5일 데이터 가져오기 (휴장일 대비)
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+        
+        df = fdr.DataReader(symbol, start_date, end_date)
+        
+        if df is None or df.empty:
             return None
-        except Exception as e:
-            # 429 에러가 아닌 다른 에러는 즉시 반환
-            error_str = str(e)
-            if "429" in error_str or "Too Many Requests" in error_str:
-                wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
-                if attempt < max_retries - 1:
-                    print(f"Rate limited for {symbol}, waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                    continue
-            # 특정 티커 실패는 무시 (다른 티커 시도)
-            # 실패도 캐시하여 반복 시도 방지 (짧은 TTL)
-            _asset_cache[symbol] = None
-            _cache_timestamp[symbol] = time.time()
+        
+        # 가장 최근 종가
+        latest_price = float(df['Close'].iloc[-1])
+        
+        if latest_price <= 0:
             return None
-    
-    # 모든 재시도 실패, 캐시에 저장
-    _asset_cache[symbol] = None
-    _cache_timestamp[symbol] = time.time()
-    return None
+        
+        # 이름이 없으면 심볼 사용
+        if not name:
+            name = symbol
+        
+        return AssetSearch(
+            symbol=symbol,
+            name=name,
+            exchange='US',
+            current_price=latest_price
+        )
+    except Exception as e:
+        print(f"US stock info error for {symbol}: {e}")
+        return None
 
 
-def get_current_price(symbol: str, max_retries: int = 3) -> Optional[float]:
-    """
-    특정 종목의 현재가 조회 (재시도 로직 포함)
-    """
-    for attempt in range(max_retries):
-        try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
-            
-            # 여러 가격 필드 시도
-            price = (
-                info.get('currentPrice') or 
-                info.get('regularMarketPrice') or
-                info.get('previousClose')
-            )
-            
-            return float(price) if price else None
-        except (HTTPError, requests.exceptions.HTTPError) as e:
-            status_code = getattr(e, 'code', None) or getattr(e.response, 'status_code', None)
-            if status_code == 429:  # Too Many Requests
-                wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
-                if attempt < max_retries - 1:
-                    print(f"Rate limited for {symbol} price fetch, waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                    continue
-                return None
-            print(f"Price fetch error for {symbol}: {e}")
+def _get_kr_stock_info(code: str, name: str) -> Optional[AssetSearch]:
+    """한국 주식 정보 가져오기 (FinanceDataReader)"""
+    try:
+        # 최근 5일 데이터 가져오기
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+        
+        df = fdr.DataReader(code, start_date, end_date)
+        
+        if df is None or df.empty:
             return None
-        except Exception as e:
-            error_str = str(e)
-            if "429" in error_str or "Too Many Requests" in error_str:
-                wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
-                if attempt < max_retries - 1:
-                    print(f"Rate limited for {symbol} price fetch, waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                    continue
-            print(f"Price fetch error for {symbol}: {e}")
+        
+        # 가장 최근 종가
+        latest_price = float(df['Close'].iloc[-1])
+        
+        if latest_price <= 0:
             return None
-    
-    return None
+        
+        # 심볼 형식: 코드 (한국 주식은 코드만 사용)
+        symbol = code
+        
+        return AssetSearch(
+            symbol=symbol,
+            name=name,
+            exchange='KRX',
+            current_price=latest_price
+        )
+    except Exception as e:
+        print(f"KR stock info error for {code}: {e}")
+        return None
+
+
+def get_current_price(symbol: str) -> Optional[float]:
+    """
+    특정 종목의 현재가 조회 (최근 종가)
+    """
+    try:
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+        
+        df = fdr.DataReader(symbol, start_date, end_date)
+        
+        if df is None or df.empty:
+            return None
+        
+        latest_price = float(df['Close'].iloc[-1])
+        return latest_price if latest_price > 0 else None
+    except Exception as e:
+        print(f"Price fetch error for {symbol}: {e}")
+        return None
 
 
 def get_multiple_prices(symbols: List[str]) -> Dict[str, Optional[float]]:
@@ -273,4 +236,3 @@ def get_multiple_prices(symbols: List[str]) -> Dict[str, Optional[float]]:
     for symbol in symbols:
         prices[symbol] = get_current_price(symbol)
     return prices
-
