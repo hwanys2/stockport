@@ -59,42 +59,50 @@ def _get_us_stocks():
         return None
 
 
+def _has_korean(text: str) -> bool:
+    """한글이 포함되어 있는지 확인"""
+    return any('\uac00' <= char <= '\ud7a3' for char in text)
+
+
 def search_assets(query: str, limit: int = 10) -> List[AssetSearch]:
     """
-    종목 검색 (FinanceDataReader 사용 - 모든 종목 검색 가능)
+    종목 검색 (FinanceDataReader 사용)
+    - 한글 쿼리: 한국 주식만 검색
+    - 영문 쿼리: 미국 주식 우선, 결과 없으면 한국 검색
     """
     try:
         query = query.strip()
         query_upper = query.upper()
         results = []
+        is_korean_query = _has_korean(query)
         
-        # 1. 한국 주식 검색 (KRX 전체)
-        krx_stocks = _get_krx_stocks()
-        if krx_stocks is not None:
-            # 종목명 또는 코드로 검색
-            matched = krx_stocks[
-                krx_stocks['Name'].str.contains(query, case=False, na=False) |
-                krx_stocks['Code'].str.contains(query, case=False, na=False)
-            ]
+        # 한글 쿼리 → 한국 주식만 검색
+        if is_korean_query:
+            krx_stocks = _get_krx_stocks()
+            if krx_stocks is not None:
+                matched = krx_stocks[
+                    krx_stocks['Name'].str.contains(query, case=False, na=False) |
+                    krx_stocks['Code'].str.contains(query, case=False, na=False)
+                ]
+                
+                for _, row in matched.head(limit).iterrows():
+                    asset = _get_kr_stock_info(row['Code'], row['Name'])
+                    if asset:
+                        results.append(asset)
             
-            for _, row in matched.head(limit).iterrows():
-                asset = _get_kr_stock_info(row['Code'], row['Name'])
-                if asset:
-                    results.append(asset)
-                    if len(results) >= limit:
-                        return results
+            return results
         
-        # 2. 미국 주식 검색 (NASDAQ + NYSE 전체)
-        if len(results) < limit:
+        # 영문 쿼리 → 미국 주식 우선 검색
+        else:
+            # 1. 미국 주식 검색
             us_stocks = _get_us_stocks()
             if us_stocks is not None:
-                # Symbol 또는 Name으로 검색
                 matched = us_stocks[
                     us_stocks['Symbol'].str.contains(query_upper, case=False, na=False) |
                     us_stocks['Name'].str.contains(query, case=False, na=False)
                 ]
                 
-                for _, row in matched.head(limit - len(results)).iterrows():
+                for _, row in matched.head(limit).iterrows():
                     symbol = row['Symbol']
                     name = row['Name']
                     asset = _get_us_stock_info(symbol, name)
@@ -102,8 +110,23 @@ def search_assets(query: str, limit: int = 10) -> List[AssetSearch]:
                         results.append(asset)
                         if len(results) >= limit:
                             return results
+            
+            # 2. 미국 주식에서 결과 없으면 한국 주식도 검색
+            if len(results) == 0:
+                krx_stocks = _get_krx_stocks()
+                if krx_stocks is not None:
+                    matched = krx_stocks[
+                        krx_stocks['Name'].str.contains(query, case=False, na=False) |
+                        krx_stocks['Code'].str.contains(query, case=False, na=False)
+                    ]
+                    
+                    for _, row in matched.head(limit).iterrows():
+                        asset = _get_kr_stock_info(row['Code'], row['Name'])
+                        if asset:
+                            results.append(asset)
+            
+            return results
         
-        return results
     except Exception as e:
         print(f"Asset search error: {e}")
         import traceback
