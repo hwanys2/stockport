@@ -5,6 +5,11 @@ from urllib.error import HTTPError
 import requests
 from ..schemas.portfolio import AssetSearch
 
+# 간단한 인메모리 캐시 (서버 재시작 시 초기화)
+_asset_cache: Dict[str, Optional[AssetSearch]] = {}
+_cache_timestamp: Dict[str, float] = {}
+CACHE_TTL = 300  # 5분
+
 # 일반적인 종목 매핑 (이름 -> 티커)
 COMMON_STOCKS = {
     # 미국 주식
@@ -46,48 +51,49 @@ def search_assets(query: str, limit: int = 10) -> List[AssetSearch]:
         results = []
         
         # 1. 일반적인 종목 매핑에서 찾기
+        found_in_mapping = False
         if query_lower in COMMON_STOCKS:
             symbol = COMMON_STOCKS[query_lower]
+            found_in_mapping = True
+            print(f"Found {query} in mapping: {symbol}")
+            
+            # API 호출 전 딜레이 (rate limiting 방지)
+            time.sleep(1.0)
+            
             asset = _try_get_asset_info(symbol)
             if asset:
                 results.append(asset)
-                # 이미 결과를 찾았고 limit에 도달하면 조기 종료
-                if len(results) >= limit:
-                    return results[:limit]
-            # API 호출 간 딜레이 (rate limiting 방지)
-            time.sleep(0.5)
+                # 매핑에서 찾은 경우 바로 반환 (추가 시도 없음)
+                return results[:limit]
         
-        # 2. 입력값을 그대로 티커로 시도 (대문자)
-        # 먼저 기본 심볼만 시도 (미국 주식일 가능성이 높음)
-        base_symbol = query_upper
-        if base_symbol not in [r.symbol for r in results]:
+        # 2. 매핑에 없는 경우에만 직접 티커 시도
+        # 한글이 포함된 경우 ticker로 시도하지 않음
+        if not found_in_mapping and query.isascii() and query.isalnum():
+            # 먼저 기본 심볼만 시도 (미국 주식일 가능성이 높음)
+            base_symbol = query_upper
+            
+            time.sleep(1.0)
             asset = _try_get_asset_info(base_symbol)
             if asset:
                 results.append(asset)
                 if len(results) >= limit:
                     return results[:limit]
-            # API 호출 간 딜레이
-            time.sleep(0.5)
         
-        # 3. 기본 심볼이 실패했거나 한국 주식일 수 있으므로 .KS와 .KQ 시도
-        # 이미 결과가 충분하면 한국 거래소는 시도하지 않음
-        if len(results) < limit:
+        # 3. 숫자로만 이루어진 경우 (한국 주식 코드일 가능성)
+        # 예: 005930, 035420
+        if not found_in_mapping and query.isdigit():
             korean_symbols = [
                 f"{query_upper}.KS",  # 한국 KOSPI
                 f"{query_upper}.KQ",  # 한국 KOSDAQ
             ]
             
-            # 이미 추가된 종목 제외
-            korean_symbols = [s for s in korean_symbols if s not in [r.symbol for r in results]]
-            
             for symbol in korean_symbols:
+                time.sleep(1.0)
                 asset = _try_get_asset_info(symbol)
                 if asset:
                     results.append(asset)
                     if len(results) >= limit:
                         break
-                # API 호출 간 딜레이
-                time.sleep(0.5)
         
         return results[:limit]
     except Exception as e:
@@ -98,7 +104,14 @@ def search_assets(query: str, limit: int = 10) -> List[AssetSearch]:
 
 
 def _try_get_asset_info(symbol: str, max_retries: int = 3) -> Optional[AssetSearch]:
-    """티커 심볼로 종목 정보 가져오기 (재시도 로직 포함)"""
+    """티커 심볼로 종목 정보 가져오기 (재시도 로직 및 캐싱 포함)"""
+    # 캐시 확인
+    if symbol in _asset_cache:
+        cache_time = _cache_timestamp.get(symbol, 0)
+        if time.time() - cache_time < CACHE_TTL:
+            print(f"Cache hit for {symbol}")
+            return _asset_cache[symbol]
+    
     for attempt in range(max_retries):
         try:
             ticker = yf.Ticker(symbol)
@@ -112,16 +125,20 @@ def _try_get_asset_info(symbol: str, max_retries: int = 3) -> Optional[AssetSear
                         # info에서 이름 가져오기
                         info = ticker.info
                         name = info.get('longName') or info.get('shortName') or symbol
-                        return AssetSearch(
+                        result = AssetSearch(
                             symbol=symbol,
                             name=name,
                             exchange=info.get('exchange', ''),
                             current_price=float(price)
                         )
+                        # 캐시에 저장
+                        _asset_cache[symbol] = result
+                        _cache_timestamp[symbol] = time.time()
+                        return result
             except (HTTPError, requests.exceptions.HTTPError) as e:
                 status_code = getattr(e, 'code', None) or getattr(e.response, 'status_code', None)
                 if status_code == 429:  # Too Many Requests
-                    wait_time = 2 ** attempt  # 지수 백오프: 1초, 2초, 4초
+                    wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
                     if attempt < max_retries - 1:
                         print(f"Rate limited for {symbol}, waiting {wait_time}s before retry...")
                         time.sleep(wait_time)
@@ -153,16 +170,20 @@ def _try_get_asset_info(symbol: str, max_retries: int = 3) -> Optional[AssetSear
                 
                 name = info.get('longName') or info.get('shortName') or symbol
                 
-                return AssetSearch(
+                result = AssetSearch(
                     symbol=info.get('symbol', symbol),
                     name=name,
                     exchange=info.get('exchange', ''),
                     current_price=float(price)
                 )
+                # 캐시에 저장
+                _asset_cache[symbol] = result
+                _cache_timestamp[symbol] = time.time()
+                return result
             except (HTTPError, requests.exceptions.HTTPError) as e:
                 status_code = getattr(e, 'code', None) or getattr(e.response, 'status_code', None)
                 if status_code == 429:  # Too Many Requests
-                    wait_time = 2 ** attempt  # 지수 백오프
+                    wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
                     if attempt < max_retries - 1:
                         print(f"Rate limited for {symbol}, waiting {wait_time}s before retry...")
                         time.sleep(wait_time)
@@ -173,7 +194,7 @@ def _try_get_asset_info(symbol: str, max_retries: int = 3) -> Optional[AssetSear
         except (HTTPError, requests.exceptions.HTTPError) as e:
             status_code = getattr(e, 'code', None) or getattr(e.response, 'status_code', None)
             if status_code == 429:  # Too Many Requests
-                wait_time = 2 ** attempt  # 지수 백오프
+                wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
                 if attempt < max_retries - 1:
                     print(f"Rate limited for {symbol}, waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
@@ -185,14 +206,20 @@ def _try_get_asset_info(symbol: str, max_retries: int = 3) -> Optional[AssetSear
             # 429 에러가 아닌 다른 에러는 즉시 반환
             error_str = str(e)
             if "429" in error_str or "Too Many Requests" in error_str:
-                wait_time = 2 ** attempt
+                wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
                 if attempt < max_retries - 1:
                     print(f"Rate limited for {symbol}, waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
                     continue
             # 특정 티커 실패는 무시 (다른 티커 시도)
+            # 실패도 캐시하여 반복 시도 방지 (짧은 TTL)
+            _asset_cache[symbol] = None
+            _cache_timestamp[symbol] = time.time()
             return None
     
+    # 모든 재시도 실패, 캐시에 저장
+    _asset_cache[symbol] = None
+    _cache_timestamp[symbol] = time.time()
     return None
 
 
@@ -216,7 +243,7 @@ def get_current_price(symbol: str, max_retries: int = 3) -> Optional[float]:
         except (HTTPError, requests.exceptions.HTTPError) as e:
             status_code = getattr(e, 'code', None) or getattr(e.response, 'status_code', None)
             if status_code == 429:  # Too Many Requests
-                wait_time = 2 ** attempt  # 지수 백오프
+                wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
                 if attempt < max_retries - 1:
                     print(f"Rate limited for {symbol} price fetch, waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
@@ -227,7 +254,7 @@ def get_current_price(symbol: str, max_retries: int = 3) -> Optional[float]:
         except Exception as e:
             error_str = str(e)
             if "429" in error_str or "Too Many Requests" in error_str:
-                wait_time = 2 ** attempt
+                wait_time = (2 ** attempt) * 2  # 지수 백오프: 2초, 4초, 8초
                 if attempt < max_retries - 1:
                     print(f"Rate limited for {symbol} price fetch, waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
