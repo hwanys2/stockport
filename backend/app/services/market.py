@@ -4,76 +4,12 @@ from datetime import datetime, timedelta
 from ..schemas.portfolio import AssetSearch
 
 
-# 한국 주식 종목 리스트 캐시
+# 종목 리스트 캐시
 _krx_stocks_cache = None
 _krx_cache_time = None
-KRX_CACHE_TTL = 3600  # 1시간
-
-# 미국 주식 주요 종목
-US_MAJOR_STOCKS = {
-    'aapl': ('AAPL', 'Apple Inc.'),
-    'apple': ('AAPL', 'Apple Inc.'),
-    '애플': ('AAPL', 'Apple Inc.'),
-    
-    'msft': ('MSFT', 'Microsoft Corporation'),
-    'microsoft': ('MSFT', 'Microsoft Corporation'),
-    '마이크로소프트': ('MSFT', 'Microsoft Corporation'),
-    
-    'googl': ('GOOGL', 'Alphabet Inc.'),
-    'google': ('GOOGL', 'Alphabet Inc.'),
-    '구글': ('GOOGL', 'Alphabet Inc.'),
-    
-    'amzn': ('AMZN', 'Amazon.com Inc.'),
-    'amazon': ('AMZN', 'Amazon.com Inc.'),
-    '아마존': ('AMZN', 'Amazon.com Inc.'),
-    
-    'tsla': ('TSLA', 'Tesla Inc.'),
-    'tesla': ('TSLA', 'Tesla Inc.'),
-    '테슬라': ('TSLA', 'Tesla Inc.'),
-    
-    'meta': ('META', 'Meta Platforms Inc.'),
-    'facebook': ('META', 'Meta Platforms Inc.'),
-    '메타': ('META', 'Meta Platforms Inc.'),
-    '페이스북': ('META', 'Meta Platforms Inc.'),
-    
-    'nvda': ('NVDA', 'NVIDIA Corporation'),
-    'nvidia': ('NVDA', 'NVIDIA Corporation'),
-    '엔비디아': ('NVDA', 'NVIDIA Corporation'),
-    
-    'nflx': ('NFLX', 'Netflix Inc.'),
-    'netflix': ('NFLX', 'Netflix Inc.'),
-    '넷플릭스': ('NFLX', 'Netflix Inc.'),
-    
-    'dis': ('DIS', 'The Walt Disney Company'),
-    'disney': ('DIS', 'The Walt Disney Company'),
-    '디즈니': ('DIS', 'The Walt Disney Company'),
-    
-    'jpm': ('JPM', 'JPMorgan Chase & Co.'),
-    'jpmorgan': ('JPM', 'JPMorgan Chase & Co.'),
-    
-    'v': ('V', 'Visa Inc.'),
-    'visa': ('V', 'Visa Inc.'),
-    
-    'ma': ('MA', 'Mastercard Incorporated'),
-    'mastercard': ('MA', 'Mastercard Incorporated'),
-    
-    'ko': ('KO', 'The Coca-Cola Company'),
-    'coca cola': ('KO', 'The Coca-Cola Company'),
-    '코카콜라': ('KO', 'The Coca-Cola Company'),
-    
-    'pypl': ('PYPL', 'PayPal Holdings Inc.'),
-    'paypal': ('PYPL', 'PayPal Holdings Inc.'),
-    
-    'intc': ('INTC', 'Intel Corporation'),
-    'intel': ('INTC', 'Intel Corporation'),
-    '인텔': ('INTC', 'Intel Corporation'),
-    
-    'amd': ('AMD', 'Advanced Micro Devices Inc.'),
-    
-    'ba': ('BA', 'The Boeing Company'),
-    'boeing': ('BA', 'The Boeing Company'),
-    '보잉': ('BA', 'The Boeing Company'),
-}
+_us_stocks_cache = None
+_us_cache_time = None
+CACHE_TTL = 3600  # 1시간
 
 
 def _get_krx_stocks():
@@ -82,7 +18,7 @@ def _get_krx_stocks():
     
     # 캐시 확인
     if _krx_stocks_cache is not None and _krx_cache_time is not None:
-        if (datetime.now() - _krx_cache_time).seconds < KRX_CACHE_TTL:
+        if (datetime.now() - _krx_cache_time).seconds < CACHE_TTL:
             return _krx_stocks_cache
     
     try:
@@ -96,46 +32,78 @@ def _get_krx_stocks():
         return None
 
 
+def _get_us_stocks():
+    """미국 전체 종목 리스트 가져오기 (캐시 사용)"""
+    global _us_stocks_cache, _us_cache_time
+    
+    # 캐시 확인
+    if _us_stocks_cache is not None and _us_cache_time is not None:
+        if (datetime.now() - _us_cache_time).seconds < CACHE_TTL:
+            return _us_stocks_cache
+    
+    try:
+        # NASDAQ + NYSE 전체 종목 가져오기
+        import pandas as pd
+        
+        nasdaq = fdr.StockListing('NASDAQ')
+        nyse = fdr.StockListing('NYSE')
+        
+        # 두 리스트 합치기
+        us_stocks = pd.concat([nasdaq, nyse], ignore_index=True)
+        
+        _us_stocks_cache = us_stocks
+        _us_cache_time = datetime.now()
+        return us_stocks
+    except Exception as e:
+        print(f"US stock listing error: {e}")
+        return None
+
+
 def search_assets(query: str, limit: int = 10) -> List[AssetSearch]:
     """
-    종목 검색 (FinanceDataReader 사용)
+    종목 검색 (FinanceDataReader 사용 - 모든 종목 검색 가능)
     """
     try:
-        query_lower = query.lower().strip()
-        query_upper = query.upper().strip()
+        query = query.strip()
+        query_upper = query.upper()
         results = []
         
-        # 1. 미국 주식 매핑에서 검색
-        if query_lower in US_MAJOR_STOCKS:
-            symbol, name = US_MAJOR_STOCKS[query_lower]
-            asset = _get_us_stock_info(symbol, name)
-            if asset:
-                results.append(asset)
-        
-        # 2. 미국 주식 티커 직접 입력 (영문만, 대문자)
-        if len(results) < limit and query.isalpha() and query.isupper():
-            asset = _get_us_stock_info(query_upper)
-            if asset:
-                # 중복 제거
-                if not any(r.symbol == asset.symbol for r in results):
+        # 1. 한국 주식 검색 (KRX 전체)
+        krx_stocks = _get_krx_stocks()
+        if krx_stocks is not None:
+            # 종목명 또는 코드로 검색
+            matched = krx_stocks[
+                krx_stocks['Name'].str.contains(query, case=False, na=False) |
+                krx_stocks['Code'].str.contains(query, case=False, na=False)
+            ]
+            
+            for _, row in matched.head(limit).iterrows():
+                asset = _get_kr_stock_info(row['Code'], row['Name'])
+                if asset:
                     results.append(asset)
+                    if len(results) >= limit:
+                        return results
         
-        # 3. 한국 주식 검색
+        # 2. 미국 주식 검색 (NASDAQ + NYSE 전체)
         if len(results) < limit:
-            krx_stocks = _get_krx_stocks()
-            if krx_stocks is not None:
-                # 종목명 또는 코드로 검색
-                matched = krx_stocks[
-                    krx_stocks['Name'].str.contains(query, case=False, na=False) |
-                    krx_stocks['Code'].str.contains(query, case=False, na=False)
+            us_stocks = _get_us_stocks()
+            if us_stocks is not None:
+                # Symbol 또는 Name으로 검색
+                matched = us_stocks[
+                    us_stocks['Symbol'].str.contains(query_upper, case=False, na=False) |
+                    us_stocks['Name'].str.contains(query, case=False, na=False)
                 ]
                 
                 for _, row in matched.head(limit - len(results)).iterrows():
-                    asset = _get_kr_stock_info(row['Code'], row['Name'])
+                    symbol = row['Symbol']
+                    name = row['Name']
+                    asset = _get_us_stock_info(symbol, name)
                     if asset:
                         results.append(asset)
+                        if len(results) >= limit:
+                            return results
         
-        return results[:limit]
+        return results
     except Exception as e:
         print(f"Asset search error: {e}")
         import traceback
